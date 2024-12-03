@@ -2,11 +2,11 @@ import json
 import re
 from pathlib import Path
 from typing import Dict, Final
-
+import os
 import translators
 from playwright.sync_api import ViewportSize, sync_playwright
 from rich.progress import track
-
+import time
 from utils import settings
 from utils.console import print_step, print_substep
 from utils.imagenarator import imagemaker
@@ -33,10 +33,13 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
     reddit_id = re.sub(r"[^\w\s-]", "", reddit_object["thread_id"])
     # ! Make sure the reddit screenshots folder exists
     Path(f"assets/temp/{reddit_id}/png").mkdir(parents=True, exist_ok=True)
-
+    # refresh the vpn client
+    os.system("nordvpn connect")
+    time.sleep(15.0)
     # set the theme and disable non-essential cookies
     if settings.config["settings"]["theme"] == "dark":
-        cookie_file = open("./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
+        cookie_file = open(
+            "./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
         bgcolor = (33, 33, 36, 255)
         txtcolor = (240, 240, 240)
         transparent = False
@@ -46,15 +49,18 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
             bgcolor = (0, 0, 0, 0)
             txtcolor = (255, 255, 255)
             transparent = True
-            cookie_file = open("./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
+            cookie_file = open(
+                "./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
         else:
             # Switch to dark theme
-            cookie_file = open("./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
+            cookie_file = open(
+                "./video_creation/data/cookie-dark-mode.json", encoding="utf-8")
             bgcolor = (33, 33, 36, 255)
             txtcolor = (240, 240, 240)
             transparent = False
     else:
-        cookie_file = open("./video_creation/data/cookie-light-mode.json", encoding="utf-8")
+        cookie_file = open(
+            "./video_creation/data/cookie-light-mode.json", encoding="utf-8")
         bgcolor = (255, 255, 255, 255)
         txtcolor = (0, 0, 0)
         transparent = False
@@ -73,7 +79,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
     with sync_playwright() as p:
         print_substep("Launching Headless Browser...")
 
-        browser = p.chromium.launch(
+        browser = p.firefox.launch(
             headless=True
         )  # headless=False will show the browser for debugging purposes
         # Device scale factor (or dsf for short) allows us to increase the resolution of the screenshots
@@ -99,9 +105,12 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
         page.goto("https://www.reddit.com/login", timeout=0)
         page.set_viewport_size(ViewportSize(width=1920, height=1080))
         page.wait_for_load_state()
+        page.wait_for_timeout(timeout=500)
 
-        page.locator(f'input[name="username"]').fill(settings.config["reddit"]["creds"]["username"])
-        page.locator(f'input[name="password"]').fill(settings.config["reddit"]["creds"]["password"])
+        page.locator(f'input[name="username"]').fill(
+            settings.config["reddit"]["creds"]["username"])
+        page.locator(f'input[name="password"]').fill(
+            settings.config["reddit"]["creds"]["password"])
         page.get_by_role("button", name="Log In").click()
         page.wait_for_timeout(5000)
 
@@ -162,8 +171,12 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 translator="google",
             )
 
+            page.wait_for_timeout(2000)  # small delay
+            # we wait for the title to appere
+            page.wait_for_selector('shreddit-post > h1', timeout=5000)
+
             page.evaluate(
-                "tl_content => document.querySelector('[data-adclicklocation=\"title\"] > div > div > h1').textContent = tl_content",
+                "tl_content => document.querySelector('shreddit-post > h1').textContent = tl_content",
                 texts_in_tl,
             )
         else:
@@ -177,12 +190,12 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 # zoom the body of the page
                 page.evaluate("document.body.style.zoom=" + str(zoom))
                 # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                location = page.locator('[data-test-id="post-content"]').bounding_box()
+                location = page.locator('shreddit-post').bounding_box()
                 for i in location:
                     location[i] = float("{:.2f}".format(location[i] * zoom))
                 page.screenshot(clip=location, path=postcontentpath)
             else:
-                page.locator('[data-test-id="post-content"]').screenshot(path=postcontentpath)
+                page.locator('shreddit-post').screenshot(path=postcontentpath)
         except Exception as e:
             print_substep("Something went wrong!", style="red")
             resp = input(
@@ -196,7 +209,8 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                     "green",
                 )
 
-            resp = input("Do you want the error traceback for debugging purposes? (y/n)")
+            resp = input(
+                "Do you want the error traceback for debugging purposes? (y/n)")
             if not resp.casefold().startswith("y"):
                 exit()
 
@@ -220,7 +234,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 if page.locator('[data-testid="content-gate"]').is_visible():
                     page.locator('[data-testid="content-gate"] button').click()
 
-                page.goto(f"https://new.reddit.com/{comment['comment_url']}")
+                page.goto(f"https://new.reddit.com{comment['comment_url']}")
 
                 # translate code
 
@@ -230,30 +244,71 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                         translator="google",
                         to_language=settings.config["reddit"]["thread"]["post_lang"],
                     )
+
+                    page.wait_for_timeout(timeout=1500)
                     page.evaluate(
-                        '([tl_content, tl_id]) => document.querySelector(`#t1_${tl_id} > div:nth-child(2) > div > div[data-testid="comment"] > div`).textContent = tl_content',
+                        '([tl_content, tl_id]) => document.querySelector(`#t1_${tl_id}-comment-rtjson-content > div:nth-child(1) > p`).textContent = tl_content',
                         [comment_tl, comment["comment_id"]],
                     )
                 try:
                     if settings.config["settings"]["zoom"] != 1:
-                        # store zoom settings
-                        zoom = settings.config["settings"]["zoom"]
-                        # zoom the body of the page
-                        page.evaluate("document.body.style.zoom=" + str(zoom))
-                        # scroll comment into view
-                        page.locator(f"#t1_{comment['comment_id']}").scroll_into_view_if_needed()
-                        # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                        location = page.locator(f"#t1_{comment['comment_id']}").bounding_box()
-                        for i in location:
-                            location[i] = float("{:.2f}".format(location[i] * zoom))
-                        page.screenshot(
-                            clip=location,
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
-                        )
+                        if settings.config["settings"]["zoom"] != 1:
+                            # Store zoom settings
+                            zoom = settings.config["settings"]["zoom"]
+
+                            # Zoom the body of the page
+                            page.evaluate(f"document.body.style.zoom = {zoom}")
+
+                            # Scroll the parent of the comment into view
+                            parent_locator = page.locator(
+                                f"#t1_{comment['comment_id']}-comment-rtjson-content").locator('xpath=..')
+                            parent_locator.scroll_into_view_if_needed()
+
+                            # Get the bounding box of the parent element
+                            location = parent_locator.bounding_box()
+
+                            # Ensure bounding box is valid
+                            if location:
+                                # Adjust for zoom (since zooming doesn't change the div's actual properties)
+                                location['x'] = float(
+                                    "{:.2f}".format(location['x'] * zoom))
+                                location['y'] = float(
+                                    "{:.2f}".format(location['y'] * zoom))
+                                location['width'] = float(
+                                    "{:.2f}".format(location['width'] * zoom))
+                                location['height'] = float(
+                                    "{:.2f}".format(location['height'] * zoom))
+
+                                # Adjust the height to be exactly 200px
+                                location['height'] = 200
+
+                                # Take a screenshot of the parent element with the adjusted height
+                                page.screenshot(
+                                    clip=location,
+                                    path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
+                                )
+                            else:
+                                print(
+                                    "Could not get the bounding box of the parent element.")
                     else:
-                        page.locator(f"#t1_{comment['comment_id']}").screenshot(
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png"
-                        )
+                        # getting the bounding_box
+                        parent_locator = page.locator(
+                            f"#t1_{comment['comment_id']}-comment-rtjson-content").locator('xpath=..')
+                        location = parent_locator.bounding_box()
+
+                        # bounding_box is valid ?
+                        if location:
+                            # ajust 200px
+                            location['height'] = 200
+
+                            #  make screenshot
+                            page.screenshot(
+                                path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
+                                clip=location  # resize to 200px
+                            )
+                        else:
+                            print(
+                                "No se pudo obtener el cuadro delimitador del elemento.")
                 except TimeoutError:
                     del reddit_object["comments"]
                     screenshot_num += 1
